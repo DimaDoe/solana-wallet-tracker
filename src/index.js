@@ -1,3 +1,6 @@
+// Load environment variables
+require('dotenv').config();
+
 const { Connection, PublicKey } = require('@solana/web3.js');
 const axios = require('axios');
 const sqlite3 = require('sqlite3').verbose();
@@ -12,8 +15,9 @@ const config = {
   rpcUrl: process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com',
   telegramToken: process.env.TELEGRAM_BOT_TOKEN,
   telegramChatId: process.env.TELEGRAM_CHAT_ID,
-  dbPath: './wallet_tracker.db',
-  trackInterval: '*/5 * * * *' // Every 5 minutes
+  dbPath: process.env.DB_PATH || './wallet_tracker.db',
+  trackInterval: process.env.TRACK_INTERVAL || '*/5 * * * *',
+  port: process.env.PORT || 3000
 };
 
 // Initialize Solana connection

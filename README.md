@@ -72,12 +72,40 @@ node status.js
 
 ## Configuration
 
-### Environment Variables
+### Environment Variables (.env file)
+The application uses a `.env` file in the project root to load configuration:
+
+```env
+# Debug and Development
+DEBUG=true
+NODE_ENV=development
+
+# Solana Configuration
+SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
+
+# Telegram Bot Configuration (optional)
+# TELEGRAM_BOT_TOKEN=your_bot_token_here
+# TELEGRAM_CHAT_ID=your_chat_id_here
+
+# Database Configuration
+DB_PATH=./wallet_tracker.db
+
+# Tracking Configuration
+TRACK_INTERVAL=*/5 * * * *
+
+# Application Settings
+PORT=3000
+```
+
+**Available Variables:**
 - `DEBUG=true` - Enable debug logging
 - `NODE_ENV=development` - Development mode
 - `SOLANA_RPC_URL` - Custom Solana RPC endpoint (default: mainnet-beta)
 - `TELEGRAM_BOT_TOKEN` - Telegram bot token for alerts
 - `TELEGRAM_CHAT_ID` - Telegram chat ID for alerts
+- `DB_PATH` - Database file path (default: ./wallet_tracker.db)
+- `TRACK_INTERVAL` - Cron schedule for tracking (default: */5 * * * *)
+- `PORT` - Application port (default: 3000)
 
 ### Database
 - **File**: `wallet_tracker.db`

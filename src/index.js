@@ -8,16 +8,49 @@ const TelegramBot = require('node-telegram-bot-api');
 const cron = require('node-cron');
 
 // Debug configuration
-const DEBUG = process.env.DEBUG === 'true' || process.env.NODE_ENV === 'development';
+const DEBUG = process.env.LOG_LEVEL === 'debug' || process.env.NODE_ENV === 'development';
 
 // Configuration
 const config = {
+  // RPC Configuration
+  heliusRpcUrl: process.env.HELIUS_RPC_URL,
+  quicknodeRpcUrl: process.env.QUICKNODE_RPC_URL,
   rpcUrl: process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com',
+  
+  // Telegram Configuration
   telegramToken: process.env.TELEGRAM_BOT_TOKEN,
   telegramChatId: process.env.TELEGRAM_CHAT_ID,
-  dbPath: process.env.DB_PATH || './wallet_tracker.db',
-  trackInterval: process.env.TRACK_INTERVAL || '*/5 * * * *',
-  port: process.env.PORT || 3000
+  
+  // Database Configuration
+  dbPath: process.env.DATABASE_PATH || './data/wallet_tracker.db',
+  
+  // Application Settings
+  nodeEnv: process.env.NODE_ENV || 'development',
+  logLevel: process.env.LOG_LEVEL || 'info',
+  port: process.env.PORT || 3000,
+  
+  // Rate Limiting
+  heliusRateLimit: parseInt(process.env.HELIUS_RATE_LIMIT) || 100000,
+  quicknodeRateLimit: parseInt(process.env.QUICKNODE_RATE_LIMIT) || 10000000,
+  pollingInterval: parseInt(process.env.POLLING_INTERVAL) || 300000,
+  
+  // Wallet Discovery Settings
+  minWalletBalance: parseFloat(process.env.MIN_WALLET_BALANCE) || 0.1,
+  minTransactionCount: parseInt(process.env.MIN_TRANSACTION_COUNT) || 10,
+  discoveryInterval: parseInt(process.env.DISCOVERY_INTERVAL) || 600000,
+  
+  // Alert Settings
+  alertCooldown: parseInt(process.env.ALERT_COOLDOWN) || 300000,
+  maxAlertsPerHour: parseInt(process.env.MAX_ALERTS_PER_HOUR) || 50,
+  minTokenMarketCap: parseInt(process.env.MIN_TOKEN_MARKET_CAP) || 1000,
+  
+  // Monitoring Settings
+  walletMonitorInterval: parseInt(process.env.WALLET_MONITOR_INTERVAL) || 300000,
+  transactionHistoryDays: parseInt(process.env.TRANSACTION_HISTORY_DAYS) || 7,
+  maxWalletsToMonitor: parseInt(process.env.MAX_WALLETS_TO_MONITOR) || 100,
+  
+  // Legacy compatibility
+  trackInterval: '*/5 * * * *'
 };
 
 // Initialize Solana connection

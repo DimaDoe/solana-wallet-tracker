@@ -49,6 +49,11 @@ const config = {
   whaleUsdThreshold: parseFloat(process.env.WHALE_USD_THRESHOLD) || 150,
   marketCapRatioThreshold: parseFloat(process.env.MARKET_CAP_RATIO_THRESHOLD) || 0.01,
   
+  // Token Swap Detection
+  excludedTokens: (process.env.EXCLUDED_TOKENS || 'SOL,USDT,USDC,WSOL').split(','),
+  enableTokenMetadata: process.env.ENABLE_TOKEN_METADATA === 'true',
+  enableDexscreenerLinks: process.env.ENABLE_DEXSCREENER_LINKS === 'true',
+  
   // Monitoring Settings
   walletMonitorInterval: parseInt(process.env.WALLET_MONITOR_INTERVAL) || 300000,
   transactionHistoryDays: parseInt(process.env.TRANSACTION_HISTORY_DAYS) || 7,
@@ -232,7 +237,7 @@ async function trackWalletActivity(walletAddress) {
   }
 }
 
-// Analyze transaction for whale activity
+// Analyze transaction for whale activity and token swaps
 async function analyzeWhaleActivity(transaction, walletAddress) {
   try {
     const activity = {
@@ -241,11 +246,49 @@ async function analyzeWhaleActivity(transaction, walletAddress) {
       isWhale: false,
       solAmount: 0,
       usdValue: 0,
-      marketCapRatio: 0
+      marketCapRatio: 0,
+      isSwap: false,
+      tokenMint: null,
+      tokenSymbol: null,
+      tokenName: null,
+      swapDirection: null, // 'buy' or 'sell'
+      dexscreenerUrl: null
     };
     
     if (!transaction || !transaction.meta) {
       return activity;
+    }
+    
+    // Check if this is a token swap by analyzing the transaction
+    const swapInfo = await analyzeTokenSwap(transaction);
+    if (swapInfo.isSwap) {
+      activity.isSwap = true;
+      activity.tokenMint = swapInfo.tokenMint;
+      activity.swapDirection = swapInfo.direction;
+      activity.type = swapInfo.direction === 'buy' ? 'token_buy' : 'token_sell';
+      
+      // Skip excluded tokens
+      if (swapInfo.tokenSymbol && config.excludedTokens.includes(swapInfo.tokenSymbol.toUpperCase())) {
+        debugLog(`Skipping excluded token: ${swapInfo.tokenSymbol}`);
+        return activity;
+      }
+      
+      // Get token metadata
+      if (config.enableTokenMetadata && swapInfo.tokenMint) {
+        const tokenMetadata = await getTokenMetadata(swapInfo.tokenMint);
+        activity.tokenSymbol = tokenMetadata.symbol || swapInfo.tokenSymbol;
+        activity.tokenName = tokenMetadata.name || swapInfo.tokenName;
+      }
+      
+      // Generate DexScreener URL
+      if (config.enableDexscreenerLinks && swapInfo.tokenMint) {
+        activity.dexscreenerUrl = `https://dexscreener.com/solana/${swapInfo.tokenMint}`;
+      }
+      
+      // Only alert for token buys (not sells)
+      if (swapInfo.direction !== 'buy') {
+        return activity;
+      }
     }
     
     // Calculate SOL amount from balance changes
@@ -258,13 +301,12 @@ async function analyzeWhaleActivity(transaction, walletAddress) {
       activity.amount = balanceChange;
       
       // Estimate USD value (simplified - in production, use real-time SOL price)
-      const estimatedSolPrice = 20; // Placeholder - should fetch from API
+      const estimatedSolPrice = 150; // Updated estimate
       activity.usdValue = balanceChange * estimatedSolPrice;
       
       // Check whale thresholds
       if (balanceChange >= config.whaleSolThreshold && activity.usdValue >= config.whaleUsdThreshold) {
         activity.isWhale = true;
-        activity.type = 'whale_transfer';
         
         // Calculate market cap ratio (simplified)
         const estimatedMarketCap = 1000000; // Placeholder - should fetch real market cap
@@ -272,7 +314,11 @@ async function analyzeWhaleActivity(transaction, walletAddress) {
         
         // Check if it meets market cap ratio threshold
         if (activity.marketCapRatio >= config.marketCapRatioThreshold) {
-          debugLog(`🐋 WHALE DETECTED: ${balanceChange.toFixed(4)} SOL (~$${activity.usdValue.toFixed(2)}) - ${activity.marketCapRatio.toFixed(4)}% of market cap`);
+          const logMessage = activity.isSwap 
+            ? `🐋 WHALE TOKEN ${activity.swapDirection.toUpperCase()} DETECTED: ${balanceChange.toFixed(4)} SOL (~$${activity.usdValue.toFixed(2)}) - Token: ${activity.tokenSymbol || activity.tokenMint}`
+            : `🐋 WHALE DETECTED: ${balanceChange.toFixed(4)} SOL (~$${activity.usdValue.toFixed(2)}) - ${activity.marketCapRatio.toFixed(4)}% of market cap`;
+          
+          debugLog(logMessage);
         }
       }
     }
@@ -280,19 +326,152 @@ async function analyzeWhaleActivity(transaction, walletAddress) {
     return activity;
   } catch (error) {
     debugLog('Error analyzing whale activity:', error);
-    return { amount: 0, type: 'transfer', isWhale: false, solAmount: 0, usdValue: 0, marketCapRatio: 0 };
+    return { 
+      amount: 0, type: 'transfer', isWhale: false, solAmount: 0, usdValue: 0, marketCapRatio: 0,
+      isSwap: false, tokenMint: null, tokenSymbol: null, tokenName: null, swapDirection: null, dexscreenerUrl: null
+    };
+  }
+}
+
+// Analyze if transaction is a token swap
+async function analyzeTokenSwap(transaction) {
+  try {
+    const swapInfo = {
+      isSwap: false,
+      tokenMint: null,
+      tokenSymbol: null,
+      tokenName: null,
+      direction: null // 'buy' or 'sell'
+    };
+    
+    if (!transaction.meta || !transaction.meta.preTokenBalances || !transaction.meta.postTokenBalances) {
+      return swapInfo;
+    }
+    
+    const preTokenBalances = transaction.meta.preTokenBalances;
+    const postTokenBalances = transaction.meta.postTokenBalances;
+    
+    // Check for token balance changes
+    const tokenChanges = [];
+    
+    // Compare pre and post token balances
+    for (const postBalance of postTokenBalances) {
+      const preBalance = preTokenBalances.find(pre => 
+        pre.accountIndex === postBalance.accountIndex && 
+        pre.mint === postBalance.mint
+      );
+      
+      const preAmount = preBalance ? parseFloat(preBalance.uiTokenAmount.uiAmountString || '0') : 0;
+      const postAmount = parseFloat(postBalance.uiTokenAmount.uiAmountString || '0');
+      const change = postAmount - preAmount;
+      
+      if (Math.abs(change) > 0) {
+        tokenChanges.push({
+          mint: postBalance.mint,
+          change: change,
+          symbol: postBalance.uiTokenAmount.uiAmountString ? 'Unknown' : null,
+          decimals: postBalance.uiTokenAmount.decimals
+        });
+      }
+    }
+    
+    // Check for new token accounts (tokens that appear in post but not in pre)
+    for (const postBalance of postTokenBalances) {
+      const existsInPre = preTokenBalances.some(pre => 
+        pre.accountIndex === postBalance.accountIndex && 
+        pre.mint === postBalance.mint
+      );
+      
+      if (!existsInPre && parseFloat(postBalance.uiTokenAmount.uiAmountString || '0') > 0) {
+        tokenChanges.push({
+          mint: postBalance.mint,
+          change: parseFloat(postBalance.uiTokenAmount.uiAmountString || '0'),
+          symbol: 'Unknown',
+          decimals: postBalance.uiTokenAmount.decimals
+        });
+      }
+    }
+    
+    // If we have token changes, this is likely a swap
+    if (tokenChanges.length > 0) {
+      swapInfo.isSwap = true;
+      
+      // Find the token that increased (bought token)
+      const boughtToken = tokenChanges.find(change => change.change > 0);
+      if (boughtToken) {
+        swapInfo.tokenMint = boughtToken.mint;
+        swapInfo.direction = 'buy';
+        swapInfo.tokenSymbol = boughtToken.symbol;
+      } else {
+        // If no positive change, check for the largest negative change (sold token)
+        const soldToken = tokenChanges.reduce((prev, current) => 
+          (Math.abs(current.change) > Math.abs(prev.change)) ? current : prev
+        );
+        if (soldToken) {
+          swapInfo.tokenMint = soldToken.mint;
+          swapInfo.direction = 'sell';
+          swapInfo.tokenSymbol = soldToken.symbol;
+        }
+      }
+    }
+    
+    return swapInfo;
+  } catch (error) {
+    debugLog('Error analyzing token swap:', error);
+    return { isSwap: false, tokenMint: null, tokenSymbol: null, tokenName: null, direction: null };
+  }
+}
+
+// Get token metadata from mint address
+async function getTokenMetadata(mintAddress) {
+  try {
+    // This is a simplified version - in production, you'd use a token metadata service
+    // For now, we'll return basic info and rely on DexScreener for full details
+    return {
+      symbol: 'Unknown',
+      name: 'Unknown Token',
+      mint: mintAddress
+    };
+  } catch (error) {
+    debugLog('Error getting token metadata:', error);
+    return { symbol: 'Unknown', name: 'Unknown Token', mint: mintAddress };
   }
 }
 
 // Send whale alert
 async function sendWhaleAlert(walletAddress, whaleActivity, signature) {
   try {
-    const alertMessage = `🐋 WHALE ALERT!\n\n` +
-      `💰 Amount: ${whaleActivity.solAmount.toFixed(4)} SOL (~$${whaleActivity.usdValue.toFixed(2)})\n` +
-      `👛 Wallet: ${walletAddress.substring(0, 8)}...${walletAddress.substring(-8)}\n` +
-      `📊 Market Cap Impact: ${whaleActivity.marketCapRatio.toFixed(4)}%\n` +
-      `🔗 Signature: ${signature}\n` +
-      `⏰ Time: ${new Date().toLocaleString()}`;
+    let alertMessage;
+    
+    if (whaleActivity.isSwap && whaleActivity.swapDirection === 'buy') {
+      // Token buy alert
+      alertMessage = `🐋 WHALE TOKEN BUY ALERT! 🚀\n\n` +
+        `💰 Amount: ${whaleActivity.solAmount.toFixed(4)} SOL (~$${whaleActivity.usdValue.toFixed(2)})\n` +
+        `🪙 Token: ${whaleActivity.tokenSymbol || 'Unknown'}\n` +
+        `📄 Mint: ${whaleActivity.tokenMint}\n` +
+        `👛 Wallet: ${walletAddress.substring(0, 8)}...${walletAddress.substring(-8)}\n` +
+        `📊 Market Cap Impact: ${whaleActivity.marketCapRatio.toFixed(4)}%\n` +
+        `🔗 Signature: ${signature}\n` +
+        `⏰ Time: ${new Date().toLocaleString()}`;
+      
+      // Add DexScreener link if available
+      if (whaleActivity.dexscreenerUrl) {
+        alertMessage += `\n\n📈 DexScreener: ${whaleActivity.dexscreenerUrl}`;
+      }
+      
+      // Add Solscan link
+      alertMessage += `\n🔍 Solscan: https://solscan.io/tx/${signature}`;
+      
+    } else {
+      // Regular whale transfer alert
+      alertMessage = `🐋 WHALE TRANSFER ALERT!\n\n` +
+        `💰 Amount: ${whaleActivity.solAmount.toFixed(4)} SOL (~$${whaleActivity.usdValue.toFixed(2)})\n` +
+        `👛 Wallet: ${walletAddress.substring(0, 8)}...${walletAddress.substring(-8)}\n` +
+        `📊 Market Cap Impact: ${whaleActivity.marketCapRatio.toFixed(4)}%\n` +
+        `🔗 Signature: ${signature}\n` +
+        `⏰ Time: ${new Date().toLocaleString()}\n` +
+        `🔍 Solscan: https://solscan.io/tx/${signature}`;
+    }
     
     // Check alert cooldown
     const lastAlert = await new Promise((resolve) => {
@@ -310,10 +489,11 @@ async function sendWhaleAlert(walletAddress, whaleActivity, signature) {
     
     if (canSendAlert) {
       // Store alert
+      const alertType = whaleActivity.isSwap ? 'whale_token_buy' : 'whale_transfer';
       await new Promise((resolve, reject) => {
         db.run(
           'INSERT INTO alerts (wallet_address, alert_type, message) VALUES (?, ?, ?)',
-          [walletAddress, 'whale_activity', alertMessage],
+          [walletAddress, alertType, alertMessage],
           (err) => {
             if (err) {
               debugLog('Error storing alert:', err);
@@ -328,7 +508,11 @@ async function sendWhaleAlert(walletAddress, whaleActivity, signature) {
       // Send Telegram alert
       await sendAlert(alertMessage);
       
-      debugLog(`🚨 Whale alert sent for wallet: ${walletAddress}`);
+      const logMessage = whaleActivity.isSwap 
+        ? `🚨 Whale token buy alert sent for wallet: ${walletAddress} - Token: ${whaleActivity.tokenSymbol || whaleActivity.tokenMint}`
+        : `🚨 Whale transfer alert sent for wallet: ${walletAddress}`;
+      
+      debugLog(logMessage);
     } else {
       debugLog(`⏳ Alert cooldown active for wallet: ${walletAddress}`);
     }

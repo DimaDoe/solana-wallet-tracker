@@ -44,6 +44,11 @@ const config = {
   maxAlertsPerHour: parseInt(process.env.MAX_ALERTS_PER_HOUR) || 50,
   minTokenMarketCap: parseInt(process.env.MIN_TOKEN_MARKET_CAP) || 1000,
   
+  // Whale Detection Settings
+  whaleSolThreshold: parseFloat(process.env.WHALE_SOL_THRESHOLD) || 1.0,
+  whaleUsdThreshold: parseFloat(process.env.WHALE_USD_THRESHOLD) || 150,
+  marketCapRatioThreshold: parseFloat(process.env.MARKET_CAP_RATIO_THRESHOLD) || 0.01,
+  
   // Monitoring Settings
   walletMonitorInterval: parseInt(process.env.WALLET_MONITOR_INTERVAL) || 300000,
   transactionHistoryDays: parseInt(process.env.TRANSACTION_HISTORY_DAYS) || 7,
@@ -165,7 +170,7 @@ function getTrackedWallets() {
   });
 }
 
-// Track wallet activity
+// Track wallet activity with whale detection
 async function trackWalletActivity(walletAddress) {
   try {
     debugLog(`Tracking activity for wallet: ${walletAddress}`);
@@ -194,11 +199,14 @@ async function trackWalletActivity(walletAddress) {
         });
         
         if (transaction) {
+          // Analyze transaction for whale activity
+          const whaleActivity = await analyzeWhaleActivity(transaction, walletAddress);
+          
           // Store transaction
           await new Promise((resolve, reject) => {
             db.run(
               'INSERT INTO transactions (wallet_address, signature, amount, transaction_type, timestamp) VALUES (?, ?, ?, ?, ?)',
-              [walletAddress, sig.signature, 0, 'transfer', new Date(sig.blockTime * 1000).toISOString()],
+              [walletAddress, sig.signature, whaleActivity.amount || 0, whaleActivity.type || 'transfer', new Date(sig.blockTime * 1000).toISOString()],
               (err) => {
                 if (err) {
                   debugLog('Error storing transaction:', err);
@@ -211,11 +219,121 @@ async function trackWalletActivity(walletAddress) {
           });
           
           debugLog(`Stored new transaction: ${sig.signature}`);
+          
+          // Check if this is whale activity and send alert
+          if (whaleActivity.isWhale) {
+            await sendWhaleAlert(walletAddress, whaleActivity, sig.signature);
+          }
         }
       }
     }
   } catch (error) {
     debugLog(`Error tracking wallet ${walletAddress}:`, error);
+  }
+}
+
+// Analyze transaction for whale activity
+async function analyzeWhaleActivity(transaction, walletAddress) {
+  try {
+    const activity = {
+      amount: 0,
+      type: 'transfer',
+      isWhale: false,
+      solAmount: 0,
+      usdValue: 0,
+      marketCapRatio: 0
+    };
+    
+    if (!transaction || !transaction.meta) {
+      return activity;
+    }
+    
+    // Calculate SOL amount from balance changes
+    const preBalances = transaction.meta.preBalances || [];
+    const postBalances = transaction.meta.postBalances || [];
+    
+    if (preBalances.length > 0 && postBalances.length > 0) {
+      const balanceChange = Math.abs(postBalances[0] - preBalances[0]) / 1e9; // Convert lamports to SOL
+      activity.solAmount = balanceChange;
+      activity.amount = balanceChange;
+      
+      // Estimate USD value (simplified - in production, use real-time SOL price)
+      const estimatedSolPrice = 20; // Placeholder - should fetch from API
+      activity.usdValue = balanceChange * estimatedSolPrice;
+      
+      // Check whale thresholds
+      if (balanceChange >= config.whaleSolThreshold && activity.usdValue >= config.whaleUsdThreshold) {
+        activity.isWhale = true;
+        activity.type = 'whale_transfer';
+        
+        // Calculate market cap ratio (simplified)
+        const estimatedMarketCap = 1000000; // Placeholder - should fetch real market cap
+        activity.marketCapRatio = (activity.usdValue / estimatedMarketCap) * 100;
+        
+        // Check if it meets market cap ratio threshold
+        if (activity.marketCapRatio >= config.marketCapRatioThreshold) {
+          debugLog(`🐋 WHALE DETECTED: ${balanceChange.toFixed(4)} SOL (~$${activity.usdValue.toFixed(2)}) - ${activity.marketCapRatio.toFixed(4)}% of market cap`);
+        }
+      }
+    }
+    
+    return activity;
+  } catch (error) {
+    debugLog('Error analyzing whale activity:', error);
+    return { amount: 0, type: 'transfer', isWhale: false, solAmount: 0, usdValue: 0, marketCapRatio: 0 };
+  }
+}
+
+// Send whale alert
+async function sendWhaleAlert(walletAddress, whaleActivity, signature) {
+  try {
+    const alertMessage = `🐋 WHALE ALERT!\n\n` +
+      `💰 Amount: ${whaleActivity.solAmount.toFixed(4)} SOL (~$${whaleActivity.usdValue.toFixed(2)})\n` +
+      `👛 Wallet: ${walletAddress.substring(0, 8)}...${walletAddress.substring(-8)}\n` +
+      `📊 Market Cap Impact: ${whaleActivity.marketCapRatio.toFixed(4)}%\n` +
+      `🔗 Signature: ${signature}\n` +
+      `⏰ Time: ${new Date().toLocaleString()}`;
+    
+    // Check alert cooldown
+    const lastAlert = await new Promise((resolve) => {
+      db.get(
+        'SELECT sent_at FROM alerts WHERE wallet_address = ? ORDER BY sent_at DESC LIMIT 1',
+        [walletAddress],
+        (err, row) => {
+          resolve(row);
+        }
+      );
+    });
+    
+    const now = Date.now();
+    const canSendAlert = !lastAlert || (now - new Date(lastAlert.sent_at).getTime()) > config.alertCooldown;
+    
+    if (canSendAlert) {
+      // Store alert
+      await new Promise((resolve, reject) => {
+        db.run(
+          'INSERT INTO alerts (wallet_address, alert_type, message) VALUES (?, ?, ?)',
+          [walletAddress, 'whale_activity', alertMessage],
+          (err) => {
+            if (err) {
+              debugLog('Error storing alert:', err);
+              reject(err);
+            } else {
+              resolve();
+            }
+          }
+        );
+      });
+      
+      // Send Telegram alert
+      await sendAlert(alertMessage);
+      
+      debugLog(`🚨 Whale alert sent for wallet: ${walletAddress}`);
+    } else {
+      debugLog(`⏳ Alert cooldown active for wallet: ${walletAddress}`);
+    }
+  } catch (error) {
+    debugLog('Error sending whale alert:', error);
   }
 }
 
@@ -268,6 +386,14 @@ async function start() {
     // Add some example wallets for testing
     await addWallet('11111111111111111111111111111112', 'System Program');
     await addWallet('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', 'Token Program');
+    
+    // Add some known whale wallets for monitoring
+    await addWallet('5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1', 'Alameda Research');
+    await addWallet('GThUX1Atko4tqhN2NaiTazWSeFWMuiUiswQBPdH4sLsI', 'FTX Exchange');
+    await addWallet('9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM', 'Binance Hot Wallet');
+    await addWallet('2ojv9BAiHUrvsm9gxDe7fJSzbNZSJcxZvf8dqmWGHG8S', 'Solana Foundation');
+    
+    debugLog('Added whale wallets for monitoring');
     
     debugLog('Application initialized successfully');
     

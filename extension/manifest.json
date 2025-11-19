@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "1RW Verification Badge",
+  "version": "1.0.0",
+  "description": "Shows 1RW human verification badges on Twitter/X profiles",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://twitter.com/*",
+    "https://x.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://twitter.com/*",
+        "https://x.com/*"
+      ],
+      "js": ["content.js"],
+      "css": ["styles.css"]
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

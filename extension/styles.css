@@ -1,0 +1,45 @@
+/* 1RW Verification Badge Styles */
+
+.onerwl-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  font-size: 10px;
+  margin-left: 4px;
+  vertical-align: middle;
+  cursor: help;
+}
+
+.onerwl-badge.verified {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: white;
+  box-shadow: 0 0 8px rgba(99, 102, 241, 0.5);
+}
+
+.onerwl-badge.verified.lifetime {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.5);
+}
+
+.onerwl-badge.not-verified {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+/* Animation for verified badge */
+.onerwl-badge.verified {
+  animation: pulse-badge 2s infinite;
+}
+
+@keyframes pulse-badge {
+  0%, 100% {
+    box-shadow: 0 0 8px rgba(99, 102, 241, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 16px rgba(99, 102, 241, 0.8);
+  }
+}

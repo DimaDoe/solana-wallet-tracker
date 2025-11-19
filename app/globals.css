@@ -1,0 +1,61 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --foreground-rgb: 255, 255, 255;
+  --background-start-rgb: 15, 15, 35;
+  --background-end-rgb: 30, 27, 75;
+}
+
+body {
+  color: rgb(var(--foreground-rgb));
+  background: linear-gradient(
+    135deg,
+    rgb(var(--background-start-rgb)),
+    rgb(var(--background-end-rgb))
+  );
+  min-height: 100vh;
+}
+
+/* Wallet Adapter Styles Override */
+.wallet-adapter-button {
+  background-color: #6366f1 !important;
+}
+
+.wallet-adapter-button:hover {
+  background-color: #4f46e5 !important;
+}
+
+.wallet-adapter-modal-wrapper {
+  background-color: rgba(30, 27, 75, 0.95) !important;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+::-webkit-scrollbar-thumb {
+  background: #6366f1;
+  border-radius: 4px;
+}
+
+/* Glow effects */
+.glow {
+  box-shadow: 0 0 20px rgba(99, 102, 241, 0.5);
+}
+
+.glow-text {
+  text-shadow: 0 0 10px rgba(99, 102, 241, 0.8);
+}
+
+/* Challenge canvas styles */
+.challenge-canvas {
+  image-rendering: pixelated;
+  border-radius: 12px;
+}
